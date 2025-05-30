@@ -43,9 +43,16 @@ class DiffusionCoefficient:
         return self.coef*torch.ones_like(t)
 
 
-class TrainDiff:
-    def __init__(self):
-        pass
+class TrainDiffussionCFG:
+    def __init__(self, score_network, dl, eta):
+        """
+        Args:
+        - score_network: unet.UNet instance that will be updated
+        - dl: dataloader for the dataset
+        - eta: probability of dropping label and doing unconditional matching (need for classifier-free guidance)
+        """
+        self.eta = eta
+        self.net = score_network
     
     def train(self):
         pass

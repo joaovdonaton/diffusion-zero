@@ -11,6 +11,8 @@ The current plan is to implement diffusion score matching for sampling from CIFA
 - Also investigate what the loss function looks like for the udpated forward process
     - Currently we have loss as squared l2 norm of (score_network(x_t) - noise). Which is what is explained in Peter's class, but that appears to be the simplified version and not the proper denoising score matching loss
 
+- Development: validation loss to monitor overfitting, record loss, train script, notebook for plotting results
+
 ## Resources
 - https://diffusion.csail.mit.edu/docs/lecture-notes.pdf
 - https://www.youtube.com/watch?v=m0OTso2Dc2U

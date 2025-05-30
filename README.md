@@ -8,6 +8,8 @@ The current plan is to implement diffusion score matching for sampling from CIFA
 - Look into what the forward process definition and scheduling looks like for SDE in song's paper (apparently the condOT thing is deterministic/flow not the SDE forward, but should work)
     - See VP and VE and scheduling, see relationship with probability path definition from 6.S184
     - Why is one vp and other ve
+- Also investigate what the loss function looks like for the udpated forward process
+    - Currently we have loss as squared l2 norm of (score_network(x_t) - noise). Which is what is explained in Peter's class, but that appears to be the simplified version and not the proper denoising score matching loss
 
 ## Resources
 - https://diffusion.csail.mit.edu/docs/lecture-notes.pdf

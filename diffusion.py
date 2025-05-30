@@ -1,4 +1,8 @@
 import torch
+import torch.optim as optim
+from torchvision import datasets
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
 import unet
 import math
 
@@ -44,7 +48,7 @@ class DiffusionCoefficient:
 
 
 class TrainDiffussionCFG:
-    def __init__(self, score_network, dl, eta):
+    def __init__(self, score_network, dl, schedule, eta):
         """
         Args:
         - score_network: unet.UNet instance that will be updated
@@ -52,11 +56,41 @@ class TrainDiffussionCFG:
         - eta: probability of dropping label and doing unconditional matching (need for classifier-free guidance)
         """
         self.eta = eta
+        self.loader = dl
         self.net = score_network
+        self.schedule = schedule
     
-    def train(self):
-        pass
+    def train(self, epoch_count):
+        optimizer = optim.AdamW(self.net.parameters(), lr=0.0001)
+        self.net.train()
 
+        for i in range(epoch_count):
+            print(f'Epoch {i} ----------')
+            losses = []
+
+            for z, y in self.loader:
+                z = z.to(device) # sample from our target distribution
+                y = y.to(device=device, dtype=torch.float32) # label for that sample
+
+                # drop labels for samples with probability self.eta
+                y[torch.rand_like(y) < self.eta] = 10 # label 10 (i.e 11th label) is for unconditional
+
+                t = torch.rand_like(y).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                noise = torch.randn_like(z)
+
+                # why didnt t work without unsqueeze, shouldnt it be broadcasting? i.e (64) * (64,1,32,32)
+
+                x_t = self.schedule.alpha(t)*z + self.schedule.beta(t)*noise
+
+                # for our loss function we will do L = ||score_network(x_t) - noise||^2
+                loss = ((self.net(x_t, t, y) - noise)**2).mean()
+
+                loss.backward()
+                optimizer.step()
+
+                losses.append(loss.item())
+
+            print(f'Loss at the end of epoch {i}: {sum(losses)/len(losses)}')
 
 # We'll use Euler Maruyama method to simulate our SDE for inference
 class SimulateDiff:
@@ -75,6 +109,8 @@ class SimulateDiff:
         - y_label: class label for CFG
         - timesteps
         """
+        self.network.eval()
+
         step_size = 1/timesteps
         x = torch.randn(1, 1, 32, 32).to(device) # (bs, c, h, w)
         t = torch.zeros(1, 1, 1, 1).to(device)
@@ -90,7 +126,19 @@ class SimulateDiff:
 
 if __name__ == '__main__':
     unet = unet.UNet([2, 4, 8], 2, 32, 10).to(device)
-    sig = DiffusionCoefficient(1)
-    sim = SimulateDiff(unet, sig)
+    # sig = DiffusionCoefficient(1)
+    # sim = SimulateDiff(unet, sig)
 
-    print(sim.simulate(0, 100))
+    #print(sim.simulate(0, 100))
+
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616]) # means and stds from data.ipynb for cifar 10 channels
+    ])
+
+    train_set = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+    train_loader = DataLoader(train_set, batch_size=500, shuffle=True, num_workers=2)
+
+    ns = NoiseScheduler()
+    train = TrainDiffussionCFG(unet, train_loader, ns, 0.1)
+    train.train(100)

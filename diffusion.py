@@ -90,9 +90,14 @@ class TrainDiffussionCFG:
                     val_losses.append(loss.item())
 
 
-            print(f'Train loss over {i}: {sum(train_losses)/len(train_losses)}')
-            print(f'Val loss over {i}: {sum(val_losses)/len(val_losses)}')
+            t_loss = sum(train_losses)/len(train_losses)
+            v_loss = sum(val_losses)/len(val_losses)
+            print(f'Train loss over {i}: {t_loss}')
+            print(f'Val loss over {i}: {v_loss}')
             torch.save(self.net.state_dict(), './models/test.pth')
+
+            with open('./models/log.csv', 'a') as f:
+                f.write(f'{t_loss}, {v_loss}\n')
 
 # We'll use Euler Maruyama method to simulate our SDE for inference
 # Note that based on the training above, we get a noise_network, not a score network, so we need some adjustment

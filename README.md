@@ -13,6 +13,10 @@ The current plan is to implement diffusion score matching for sampling from CIFA
 
 - Development: validation loss to monitor overfitting, record loss, train script, notebook for plotting results
 
+<br>
+note: problem right now is that im just mixing things up. For example the forward process is the condOT and it's more of a determinstic flow matching approach, but then for the loss I'm doing squared l2 norm of score_network - noise, which is the SDE score-matching version so it doesnt align. Reason ti doesnt work like the lab in 6.s184 is because of the loss, it should be something like that formula for the conditional vector field, but we ar edoing score matching, so: we need to change from the condOT approach to whatever score matching does
+<br>
+
 ## Resources
 - https://diffusion.csail.mit.edu/docs/lecture-notes.pdf
 - https://www.youtube.com/watch?v=m0OTso2Dc2U

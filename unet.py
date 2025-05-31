@@ -181,7 +181,7 @@ class UNet(nn.Module):
         """
         super().__init__()
         
-        self.init_conv = nn.Sequential(nn.Conv2d(3, channels[0], kernel_size=3, padding=1), nn.BatchNorm2d(channels[0]), nn.SiLU())
+        self.init_conv = nn.Sequential(nn.Conv2d(1, channels[0], kernel_size=3, padding=1), nn.BatchNorm2d(channels[0]), nn.SiLU())
 
         self.time_embedder = TimeEmbedder(t_embed_dim)
 
@@ -200,7 +200,7 @@ class UNet(nn.Module):
 
         self.midcoder = Midcoder(channels[-1], num_residual_layers, t_embed_dim, y_embed_dim)
 
-        self.final_conv = nn.Conv2d(channels[0], 3, kernel_size=3, padding=1)
+        self.final_conv = nn.Conv2d(channels[0], 1, kernel_size=3, padding=1)
 
     def forward(self, x, t, y):
         """

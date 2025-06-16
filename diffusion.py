@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 from torchvision import datasets
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import unet
 import math
 import matplotlib.pyplot as plt
@@ -25,6 +25,19 @@ class DiffusionCoefficient:
         return self.sigma_min * (self.sigma_max/self.sigma_min)**t
 
 
+class NoiseScheduler:
+    def __init__(self):
+        self.beta_min = 0.05
+        self.beta_max = 1
+
+    def beta(self, t):
+        return self.beta_min + t*(self.beta_max - self.beta_min)
+
+    # a_bar = e^(-int_0^t(beta)dt)
+    def alpha_bar(self, t):
+        return torch.exp(-(self.beta_min*t + 0.5*(self.beta_max-self.beta_min) * (t**2)))
+
+
 class TrainDiffussionCFG:
     def __init__(self, score_network, train_loader, val_loader, schedule, eta, lr):
         """
@@ -33,13 +46,14 @@ class TrainDiffussionCFG:
         - train_loader: dataloader for the train dataset
         - val_loader: dataloader for the validation dataset
         - eta: probability of dropping label and doing unconditional matching (need for classifier-free guidance)
+        - schedule: noise scheduler for loss
         - lr: learn rate for optimizer
         """
         self.eta = eta
         self.loader = train_loader
         self.val_loader = val_loader
         self.net = score_network
-        self.diff_coef = schedule
+        self.schedule = schedule
         self.lr = lr
     
     def train(self, epoch_count):
@@ -61,11 +75,29 @@ class TrainDiffussionCFG:
                 t = torch.rand_like(y).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
                 noise = torch.randn_like(z)
 
-                x_t = z + self.diff_coef(t)*noise
+                alpha_bar = self.schedule.alpha_bar(t).clamp(min=1e-5, max=0.999)
 
-                # for our loss function we will do L = ||score_network(x_t) - noise/self.diff_coef(t)||^2
-                loss = ((self.net(x_t, t, y) - noise)**2).mean()
+                x_t = torch.sqrt(alpha_bar)*z + torch.sqrt(1-alpha_bar)*noise
 
+                # DEBUG VISUALIZE CORRUPTION
+                # x_tt = reverse_norm(x_t[0], [0.1307], [0.3081])
+                # x_tt = x_tt.clamp(0, 1).squeeze(0) # c, h, w
+
+                # x_tt = x_tt.permute(1, 2, 0).cpu() # convert to h, w, c 
+                # print(x_tt)
+                # print(f'at t = {t[0]}')
+
+                # plt.imshow(x_tt, cmap='gray')
+                # plt.show()
+                ####
+
+                # for our loss function we will do L = ||score_network(x_t) - ||^2
+                net_eval = self.net(x_t, t, y)
+                # loss = ( torch.sqrt(1-alpha_bar)*(net_eval + (noise/torch.sqrt(1-alpha_bar)))**2).mean()
+                loss = ( (torch.sqrt(1-alpha_bar)*net_eval + (noise))**2).mean()
+
+                # print(loss.item())
+                # print(net_eval.mean())
                 loss.backward()
                 optimizer.step()
 
@@ -83,9 +115,11 @@ class TrainDiffussionCFG:
                     t = torch.rand_like(y).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
                     noise = torch.randn_like(z)
 
-                    x_t = z + self.diff_coef(t)*noise
+                    alpha_bar = self.schedule.alpha_bar(t).clamp(min=1e-5, max=0.999)
 
-                    loss = ((self.net(x_t, t, y) - noise)**2).mean()
+                    x_t = torch.sqrt(alpha_bar)*z + torch.sqrt(1-alpha_bar)*noise
+
+                    loss = ( (torch.sqrt(1-alpha_bar)*self.net(x_t, t, y) + (noise))**2).mean()
 
                     val_losses.append(loss.item())
 
@@ -108,7 +142,7 @@ class SimulateDiff:
         - noise_network: trained unet.UNet instance
         """
         self.network = noise_network
-        self.diff_coef = schedule
+        self.schedule = schedule
     
     @torch.no_grad
     def simulate(self, y_label, guidance_strength, timesteps):
@@ -121,7 +155,7 @@ class SimulateDiff:
         self.network.eval()
 
         step_size = 1/timesteps
-        x = torch.randn(1, 1, 32, 32).to(device) * self.diff_coef(torch.tensor([1.0]).to(device)) # (bs, c, h, w). Also, with VE we start at N(0, sigma^2I_d) since thats where we end up at t after noising
+        x = torch.randn(1, 1, 32, 32).to(device)
         t = torch.ones(1, 1, 1, 1).to(device)
         y = torch.tensor(y_label).to(device)
         y_null = torch.tensor(10).to(device)
@@ -129,17 +163,21 @@ class SimulateDiff:
             noise = torch.randn(1, 1, 32, 32).to(device)
 
             # note that we have labels 0-9 for classes, then 10 for the null (unconditional) label
-            # we trained for both cond/uncond noise network using technique from CFG
 
             cfg_net = (1-guidance_strength)*self.network(x, t, y_null) + guidance_strength*self.network(x, t, y)
 
-            # drift = ((self.schedule.beta(t)**2)*(self.schedule.alpha_dt(t)/self.schedule.alpha(t)) - self.schedule.beta_dt(t)*self.schedule.beta(t) + (1/2)*self.sigma(t)**2)
-            # drift = drift * (-cfg_net/self.schedule.beta(t)) + x*(self.schedule.alpha_dt(t)/self.schedule.alpha(t))
+            # print(' x value ')
+            # print(x)
+            #print(' net output ')
+            #print(self.network(x,t,y))
 
-            drift = -self.diff_coef(t)*cfg_net
-            print(drift)
+            bt = self.schedule.beta(t)
+            alpha_bar = self.schedule.alpha_bar(t).clamp(min=1e-5, max=0.999)
 
-            x = x + step_size*drift + self.diff_coef(t)*math.sqrt(step_size)*noise
+            print(t, bt*cfg_net.abs().mean())
+            drift = -0.5 * bt * x - bt*(-cfg_net/torch.sqrt(1-alpha_bar))
+
+            x = x + step_size*drift + torch.sqrt(step_size*bt)*noise
             t = t - step_size
 
         return x 
@@ -152,39 +190,42 @@ def reverse_norm(x, means, stds):
     return x * std + mean
 
 if __name__ == '__main__':
-    unet = unet.UNet([2, 4, 8], 2, 32, 10).to(device)
+    unet = unet.UNet([32, 64, 128], 2, 32, 10).to(device)
     # sig = DiffusionCoefficient(1)
     # sim = SimulateDiff(unet, sig)
 
     #print(sim.simulate(0, 100))
 
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize([0.1307], [0.3081]) # means and stds from data.ipynb for cifar 10 channels
-    ])
+    # transform = transforms.Compose([
+    #     transforms.ToTensor(),
+    #     transforms.Normalize([0.1307], [0.3081]) # means and stds from data.ipynb for cifar 10 channels
+    # ])
 
-    train_set = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-    train_loader = DataLoader(train_set, batch_size=200, shuffle=True, num_workers=2)
+    # #train_set = Subset(datasets.MNIST(root='./data', train=True, download=True, transform=transform), range(200))
+    # train_set = (datasets.MNIST(root='./data', train=True, download=True, transform=transform))
+    # train_loader = DataLoader(train_set, batch_size=200, shuffle=True, num_workers=2)
 
-    validation_set = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
-    validation_loader = DataLoader(train_set, batch_size=200, shuffle=True, num_workers=2)
+    # #validation_set = Subset(datasets.MNIST(root='./data', train=False, download=True, transform=transform), range(200))
+    # validation_set = (datasets.MNIST(root='./data', train=False, download=True, transform=transform))
+    # validation_loader = DataLoader(validation_set, batch_size=200, shuffle=True, num_workers=2)
 
-    train = TrainDiffussionCFG(unet, train_loader, validation_loader, DiffusionCoefficient(), 0.1, 1e-5)
-    train.train(500)
+    # train = TrainDiffussionCFG(unet, train_loader, validation_loader, NoiseScheduler(), 0.1, 1e-5)
+    # train.train(500)
 
-    torch.save(unet.state_dict(), './models/final.pth')
+    # torch.save(unet.state_dict(), './models/final.pth')
 
-    # unet.load_state_dict(torch.load('./models/test.pth', weights_only=True, map_location=torch.device(device)))
+    unet.load_state_dict(torch.load('./models/test.pth', weights_only=True, map_location=torch.device(device)))
 
-    # ns = DiffusionCoefficient()
-    # sim = SimulateDiff(unet, ns)
-    # y = sim.simulate(5, 1, 1000)
-    # print(y)
+    ns = NoiseScheduler()
+    sim = SimulateDiff(unet, ns)
+    y = sim.simulate(3, 4, 1500)
+    print(y)
     
-    # y = reverse_norm(y, [0.1307], [0.3081])
-    # y = y.clamp(0, 1).squeeze(0) # c, h, w
+    y = reverse_norm(y, [0.1307], [0.3081])
+    y = y.clamp(0, 1).squeeze(0) # c, h, w
 
-    # y = y.permute(1, 2, 0).cpu() # convert to h, w, c 
+    y = y.permute(1, 2, 0).cpu() # convert to h, w, c 
+    print(y)
 
-    # plt.imshow(y)
-    # plt.show()
+    plt.imshow(y, cmap='gray')
+    plt.show()

@@ -12,23 +12,23 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Note that all terminology and formulas used here are defined in the accompanying readme and notes
 
 # according to formula from song's paper
-class DiffusionCoefficient:
-    def __init__(self):
-        self.sigma_min = 0.01
-        self.sigma_max = 50
+# class DiffusionCoefficient:
+#     def __init__(self):
+#         self.sigma_min = 0.01
+#         self.sigma_max = 50
     
-    def __call__(self, t):
-        """
-        Args:
-        - t: (batch,)
-        """
-        return self.sigma_min * (self.sigma_max/self.sigma_min)**t
+#     def __call__(self, t):
+#         """
+#         Args:
+#         - t: (batch,)
+#         """
+#         return self.sigma_min * (self.sigma_max/self.sigma_min)**t
 
 
 class NoiseScheduler:
     def __init__(self):
-        self.beta_min = 0.05
-        self.beta_max = 1
+        self.beta_min = 0.1
+        self.beta_max = 20
 
     def beta(self, t):
         return self.beta_min + t*(self.beta_max - self.beta_min)
@@ -91,10 +91,11 @@ class TrainDiffussionCFG:
                 # plt.show()
                 ###
 
-                # for our loss function we will do L = ||score_network(x_t) - ||^2
                 #print(y)
                 net_eval = self.net(x_t, t, y)
                 #loss = ( (net_eval - (noise/torch.sqrt(1-alpha_bar)))**2).mean()
+
+                # this setup causes us to learn the negative score
                 loss = ( (torch.sqrt(1-alpha_bar)*net_eval + (noise))**2).mean()
 
                 # print(loss.item())
@@ -155,17 +156,17 @@ class SimulateDiff:
         self.network.eval()
 
         step_size = 1.0/timesteps
-        x = torch.randn(1, 1, 32, 32).to(device)
+        x = torch.randn(1, 1, 28, 28).to(device)
         t = torch.full((1, 1, 1, 1), 0.999).to(device)
         y = torch.tensor(y_label).to(device)
         y_null = torch.tensor(10).to(device)
         for debug_t in range(timesteps):
-            noise = torch.randn(1, 1, 32, 32).to(device)
+            noise = torch.randn(1, 1, 28, 28).to(device)
 
             # note that we have labels 0-9 for classes, then 10 for the null (unconditional) label
 
+            #cfg_net = (1-guidance_strength)*self.network(x, t, y_null) + guidance_strength*self.network(x, t, y)
             cfg_net = (1-guidance_strength)*self.network(x, t, y_null) + guidance_strength*self.network(x, t, y)
-            #cfg_net = self.network(x, t, y_null) + guidance_strength * (self.network(x, t, y) - self.network(x, t, y_null))
 
             # print(' x value ')
             # print(x)
@@ -181,7 +182,7 @@ class SimulateDiff:
             x = x + step_size*drift + torch.sqrt(step_size*bt)*noise
             t = t - step_size
 
-            if debug_t % 200 == 0:
+            if debug_t % 100 == 0:
                 # DEBUG VISUALIZE denoising
                 x_tt = reverse_norm(x[0], [0.1307], [0.3081])
                 x_tt = x_tt.clamp(0, 1).squeeze(0) # c, h, w
@@ -203,7 +204,7 @@ def reverse_norm(x, means, stds):
     return x * std + mean
 
 if __name__ == '__main__':
-    unet = unet.UNet([32, 64, 128], 2, 128, 10).to(device)
+    unet = unet.UNet([64, 128, 256], 2, 128, 32).to(device)
     # sig = DiffusionCoefficient(1)
     # sim = SimulateDiff(unet, sig)
 
@@ -227,11 +228,11 @@ if __name__ == '__main__':
 
     # torch.save(unet.state_dict(), './models/final.pth')
 
-    unet.load_state_dict(torch.load('./models/5/test260.pth', weights_only=True, map_location=torch.device(device)))
+    unet.load_state_dict(torch.load('./models/test70.pth', weights_only=True, map_location=torch.device(device)))
 
     ns = NoiseScheduler()
     sim = SimulateDiff(unet, ns)
-    y = sim.simulate(0, 1, 1000)
+    y = sim.simulate(1, 3, 500)
     print(y)
     
     y = reverse_norm(y, [0.1307], [0.3081])

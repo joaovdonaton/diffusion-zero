@@ -6,24 +6,11 @@ from torch.utils.data import DataLoader, Subset
 import unet
 import math
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Note that all terminology and formulas used here are defined in the accompanying readme and notes
-
-# according to formula from song's paper
-# class DiffusionCoefficient:
-#     def __init__(self):
-#         self.sigma_min = 0.01
-#         self.sigma_max = 50
-    
-#     def __call__(self, t):
-#         """
-#         Args:
-#         - t: (batch,)
-#         """
-#         return self.sigma_min * (self.sigma_max/self.sigma_min)**t
-
 
 class NoiseScheduler:
     def __init__(self):
@@ -91,15 +78,10 @@ class TrainDiffussionCFG:
                 # plt.show()
                 ###
 
-                #print(y)
                 net_eval = self.net(x_t, t, y)
-                #loss = ( (net_eval - (noise/torch.sqrt(1-alpha_bar)))**2).mean()
-
                 # this setup causes us to learn the negative score
                 loss = ( (torch.sqrt(1-alpha_bar)*net_eval + (noise))**2).mean()
 
-                # print(loss.item())
-                # print(net_eval.mean())
                 loss.backward()
                 optimizer.step()
 
@@ -165,7 +147,6 @@ class SimulateDiff:
 
             # note that we have labels 0-9 for classes, then 10 for the null (unconditional) label
 
-            #cfg_net = (1-guidance_strength)*self.network(x, t, y_null) + guidance_strength*self.network(x, t, y)
             cfg_net = (1-guidance_strength)*self.network(x, t, y_null) + guidance_strength*self.network(x, t, y)
 
             # print(' x value ')
@@ -176,13 +157,12 @@ class SimulateDiff:
             bt = self.schedule.beta(t)
             alpha_bar = self.schedule.alpha_bar(t).clamp(min=1e-5, max=0.999)
 
-            print(t, (bt*cfg_net).norm(), bt)
             drift = -0.5 * bt * x + bt*cfg_net
 
             x = x + step_size*drift + torch.sqrt(step_size*bt)*noise
             t = t - step_size
 
-            if debug_t % 100 == 0:
+            if debug_t % 90011 == 0 and debug_t != 0:
                 # DEBUG VISUALIZE denoising
                 x_tt = reverse_norm(x[0], [0.1307], [0.3081])
                 x_tt = x_tt.clamp(0, 1).squeeze(0) # c, h, w
@@ -193,6 +173,9 @@ class SimulateDiff:
 
                 plt.imshow(x_tt, cmap='gray')
                 plt.show()
+
+            # if t < 0.01:
+            #     break
 
         return x 
 
@@ -228,18 +211,45 @@ if __name__ == '__main__':
 
     # torch.save(unet.state_dict(), './models/final.pth')
 
-    unet.load_state_dict(torch.load('./models/test70.pth', weights_only=True, map_location=torch.device(device)))
+    # unet.load_state_dict(torch.load('./models/test110.pth', weights_only=True, map_location=torch.device(device)))
+
+    # ns = NoiseScheduler()
+    # sim = SimulateDiff(unet, ns)
+    # y = sim.simulate(9, 3, 200)
+    # print(y)
+    
+    # y = reverse_norm(y, [0.1307], [0.3081])
+    # y = y.clamp(0, 1).squeeze(0) # c, h, w
+
+    # y = y.permute(1, 2, 0).cpu() # convert to h, w, c 
+    # print(y)
+
+    # plt.imshow(y, cmap='gray')
+    # plt.show()
+    
+    unet.load_state_dict(torch.load('./models/test110.pth', weights_only=True, map_location=torch.device(device)))
 
     ns = NoiseScheduler()
     sim = SimulateDiff(unet, ns)
-    y = sim.simulate(1, 3, 500)
-    print(y)
     
-    y = reverse_norm(y, [0.1307], [0.3081])
-    y = y.clamp(0, 1).squeeze(0) # c, h, w
+    outs = []
 
-    y = y.permute(1, 2, 0).cpu() # convert to h, w, c 
-    print(y)
+    print('Generating 10 samples')
+    for i in tqdm(range(10)):
+        y = sim.simulate(i, 5, 100)
+        
+        y = reverse_norm(y, [0.1307], [0.3081])
+        y = y.clamp(0, 1).squeeze(0) # c, h, w
 
-    plt.imshow(y, cmap='gray')
+        y = y.permute(1, 2, 0).cpu() # convert to h, w, c 
+
+        outs.append(y)
+
+    fig, axes = plt.subplots(1, 10, figsize=(20, 2))
+
+    for ax, o in zip(axes, outs):
+        ax.imshow(o, cmap='gray', interpolation='nearest')
+        ax.axis('off')   # turn off ticks
+
+    plt.tight_layout()
     plt.show()

@@ -89,11 +89,12 @@ class TrainDiffussionCFG:
 
                 # plt.imshow(x_tt, cmap='gray')
                 # plt.show()
-                ####
+                ###
 
                 # for our loss function we will do L = ||score_network(x_t) - ||^2
+                #print(y)
                 net_eval = self.net(x_t, t, y)
-                # loss = ( torch.sqrt(1-alpha_bar)*(net_eval + (noise/torch.sqrt(1-alpha_bar)))**2).mean()
+                #loss = ( (net_eval - (noise/torch.sqrt(1-alpha_bar)))**2).mean()
                 loss = ( (torch.sqrt(1-alpha_bar)*net_eval + (noise))**2).mean()
 
                 # print(loss.item())
@@ -128,20 +129,19 @@ class TrainDiffussionCFG:
             v_loss = sum(val_losses)/len(val_losses)
             print(f'Train loss over {i}: {t_loss}')
             print(f'Val loss over {i}: {v_loss}')
-            torch.save(self.net.state_dict(), './models/test.pth')
+            torch.save(self.net.state_dict(), f'./models/test{i}.pth')
 
             with open('./models/log.csv', 'a') as f:
                 f.write(f'{t_loss}, {v_loss}\n')
 
 # We'll use Euler Maruyama method to simulate our SDE for inference
-# Note that based on the training above, we get a noise_network, not a score network, so we need some adjustment
 class SimulateDiff:
-    def __init__(self, noise_network, schedule):
+    def __init__(self, score_network, schedule):
         """
         Args:
         - noise_network: trained unet.UNet instance
         """
-        self.network = noise_network
+        self.network = score_network
         self.schedule = schedule
     
     @torch.no_grad
@@ -154,17 +154,18 @@ class SimulateDiff:
         """
         self.network.eval()
 
-        step_size = 1/timesteps
+        step_size = 1.0/timesteps
         x = torch.randn(1, 1, 32, 32).to(device)
-        t = torch.ones(1, 1, 1, 1).to(device)
+        t = torch.full((1, 1, 1, 1), 0.999).to(device)
         y = torch.tensor(y_label).to(device)
         y_null = torch.tensor(10).to(device)
-        for _ in range(timesteps):
+        for debug_t in range(timesteps):
             noise = torch.randn(1, 1, 32, 32).to(device)
 
             # note that we have labels 0-9 for classes, then 10 for the null (unconditional) label
 
             cfg_net = (1-guidance_strength)*self.network(x, t, y_null) + guidance_strength*self.network(x, t, y)
+            #cfg_net = self.network(x, t, y_null) + guidance_strength * (self.network(x, t, y) - self.network(x, t, y_null))
 
             # print(' x value ')
             # print(x)
@@ -174,11 +175,23 @@ class SimulateDiff:
             bt = self.schedule.beta(t)
             alpha_bar = self.schedule.alpha_bar(t).clamp(min=1e-5, max=0.999)
 
-            print(t, bt*cfg_net.abs().mean())
-            drift = -0.5 * bt * x - bt*(-cfg_net/torch.sqrt(1-alpha_bar))
+            print(t, (bt*cfg_net).norm(), bt)
+            drift = -0.5 * bt * x + bt*cfg_net
 
             x = x + step_size*drift + torch.sqrt(step_size*bt)*noise
             t = t - step_size
+
+            if debug_t % 200 == 0:
+                # DEBUG VISUALIZE denoising
+                x_tt = reverse_norm(x[0], [0.1307], [0.3081])
+                x_tt = x_tt.clamp(0, 1).squeeze(0) # c, h, w
+
+                x_tt = x_tt.permute(1, 2, 0).cpu() # convert to h, w, c 
+                print(x_tt)
+                print(f'at t = {t[0]}')
+
+                plt.imshow(x_tt, cmap='gray')
+                plt.show()
 
         return x 
 
@@ -190,35 +203,35 @@ def reverse_norm(x, means, stds):
     return x * std + mean
 
 if __name__ == '__main__':
-    unet = unet.UNet([32, 64, 128], 2, 32, 10).to(device)
+    unet = unet.UNet([32, 64, 128], 2, 128, 10).to(device)
     # sig = DiffusionCoefficient(1)
     # sim = SimulateDiff(unet, sig)
 
     #print(sim.simulate(0, 100))
 
-    # transform = transforms.Compose([
-    #     transforms.ToTensor(),
-    #     transforms.Normalize([0.1307], [0.3081]) # means and stds from data.ipynb for cifar 10 channels
-    # ])
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize([0.1307], [0.3081]) # means and stds from data.ipynb for mnist digits
+    ])
 
     # #train_set = Subset(datasets.MNIST(root='./data', train=True, download=True, transform=transform), range(200))
     # train_set = (datasets.MNIST(root='./data', train=True, download=True, transform=transform))
-    # train_loader = DataLoader(train_set, batch_size=200, shuffle=True, num_workers=2)
+    # train_loader = DataLoader(train_set, batch_size=400, shuffle=True, num_workers=2)
 
     # #validation_set = Subset(datasets.MNIST(root='./data', train=False, download=True, transform=transform), range(200))
     # validation_set = (datasets.MNIST(root='./data', train=False, download=True, transform=transform))
-    # validation_loader = DataLoader(validation_set, batch_size=200, shuffle=True, num_workers=2)
+    # validation_loader = DataLoader(validation_set, batch_size=400, shuffle=True, num_workers=2)
 
-    # train = TrainDiffussionCFG(unet, train_loader, validation_loader, NoiseScheduler(), 0.1, 1e-5)
+    # train = TrainDiffussionCFG(unet, train_loader, validation_loader, NoiseScheduler(), 0.1, 1e-4)
     # train.train(500)
 
     # torch.save(unet.state_dict(), './models/final.pth')
 
-    unet.load_state_dict(torch.load('./models/test.pth', weights_only=True, map_location=torch.device(device)))
+    unet.load_state_dict(torch.load('./models/5/test260.pth', weights_only=True, map_location=torch.device(device)))
 
     ns = NoiseScheduler()
     sim = SimulateDiff(unet, ns)
-    y = sim.simulate(3, 4, 1500)
+    y = sim.simulate(0, 1, 1000)
     print(y)
     
     y = reverse_norm(y, [0.1307], [0.3081])

@@ -1,3 +1,5 @@
+# If ran as main serves as our training script.
+
 import torch
 import torch.optim as optim
 from torchvision import datasets
@@ -7,10 +9,9 @@ import unet
 import math
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import argparse
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# Note that all terminology and formulas used here are defined in the accompanying readme and notes
 
 class NoiseScheduler:
     def __init__(self):
@@ -174,9 +175,6 @@ class SimulateDiff:
                 plt.imshow(x_tt, cmap='gray')
                 plt.show()
 
-            # if t < 0.01:
-            #     break
-
         return x 
 
 
@@ -187,69 +185,25 @@ def reverse_norm(x, means, stds):
     return x * std + mean
 
 if __name__ == '__main__':
-    unet = unet.UNet([64, 128, 256], 2, 128, 32).to(device)
-    # sig = DiffusionCoefficient(1)
-    # sim = SimulateDiff(unet, sig)
+    parser = argparse.ArgumentParser()
+    #parser.add_argument('-m', '--mode', choices=['train', 'inference'], required=True)
 
-    #print(sim.simulate(0, 100))
+    args = parser.parse_args()
+
+    unet = unet.UNet([64, 128, 256], 2, 128, 32).to(device)
 
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize([0.1307], [0.3081]) # means and stds from data.ipynb for mnist digits
     ])
 
-    # #train_set = Subset(datasets.MNIST(root='./data', train=True, download=True, transform=transform), range(200))
-    # train_set = (datasets.MNIST(root='./data', train=True, download=True, transform=transform))
-    # train_loader = DataLoader(train_set, batch_size=400, shuffle=True, num_workers=2)
+    train_set = (datasets.MNIST(root='./data', train=True, download=True, transform=transform))
+    train_loader = DataLoader(train_set, batch_size=400, shuffle=True, num_workers=2)
 
-    # #validation_set = Subset(datasets.MNIST(root='./data', train=False, download=True, transform=transform), range(200))
-    # validation_set = (datasets.MNIST(root='./data', train=False, download=True, transform=transform))
-    # validation_loader = DataLoader(validation_set, batch_size=400, shuffle=True, num_workers=2)
+    validation_set = (datasets.MNIST(root='./data', train=False, download=True, transform=transform))
+    validation_loader = DataLoader(validation_set, batch_size=400, shuffle=True, num_workers=2)
 
-    # train = TrainDiffussionCFG(unet, train_loader, validation_loader, NoiseScheduler(), 0.1, 1e-4)
-    # train.train(500)
+    train = TrainDiffussionCFG(unet, train_loader, validation_loader, NoiseScheduler(), 0.1, 1e-4)
+    train.train(500)
 
-    # torch.save(unet.state_dict(), './models/final.pth')
-
-    # unet.load_state_dict(torch.load('./models/test110.pth', weights_only=True, map_location=torch.device(device)))
-
-    # ns = NoiseScheduler()
-    # sim = SimulateDiff(unet, ns)
-    # y = sim.simulate(9, 3, 200)
-    # print(y)
-    
-    # y = reverse_norm(y, [0.1307], [0.3081])
-    # y = y.clamp(0, 1).squeeze(0) # c, h, w
-
-    # y = y.permute(1, 2, 0).cpu() # convert to h, w, c 
-    # print(y)
-
-    # plt.imshow(y, cmap='gray')
-    # plt.show()
-    
-    unet.load_state_dict(torch.load('./models/test110.pth', weights_only=True, map_location=torch.device(device)))
-
-    ns = NoiseScheduler()
-    sim = SimulateDiff(unet, ns)
-    
-    outs = []
-
-    print('Generating 10 samples')
-    for i in tqdm(range(10)):
-        y = sim.simulate(i, 5, 100)
-        
-        y = reverse_norm(y, [0.1307], [0.3081])
-        y = y.clamp(0, 1).squeeze(0) # c, h, w
-
-        y = y.permute(1, 2, 0).cpu() # convert to h, w, c 
-
-        outs.append(y)
-
-    fig, axes = plt.subplots(1, 10, figsize=(20, 2))
-
-    for ax, o in zip(axes, outs):
-        ax.imshow(o, cmap='gray', interpolation='nearest')
-        ax.axis('off')   # turn off ticks
-
-    plt.tight_layout()
-    plt.show()
+    torch.save(unet.state_dict(), './models/final.pth')

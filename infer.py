@@ -9,8 +9,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-m', '--model', required=True)
+parser.add_argument('-w', '--guidance_strength', help='guidance strength for CFG', required=True)
+parser.add_argument('-t', '--timesteps', help='timesteps for euler maruyama method', required=True)
 
 args = parser.parse_args()
+
+GUIDANCE_STRENGTH = float(args.guidance_strength)
+TIMESTEPS = int(args.timesteps)
 
 MODEL_PATH = args.model
 
@@ -41,7 +46,7 @@ outs = []
 
 print('Generating 10 samples')
 for i in tqdm(range(10)):
-    y = sim.simulate(i, 5, 50)
+    y = sim.simulate(i, GUIDANCE_STRENGTH, TIMESTEPS)
     
     y = reverse_norm(y, [0.1307], [0.3081])
     y = y.clamp(0, 1).squeeze(0) # c, h, w

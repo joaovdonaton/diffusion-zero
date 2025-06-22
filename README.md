@@ -1,8 +1,11 @@
 # diffusion-zero
 Implementing score matching diffusion using SDEs in PyTorch <br>
-Most of the definitions and terminology used here are from [Peter E. Holderrieth's](https://www.peterholderrieth.com/) notes from the [MIT 6.S184](https://diffusion.csail.mit.edu/) lectures
 
-The current plan is to implement diffusion score matching for sampling from CIFAR10 distribution, using classifier-free guidance (so we can experiment with different guidance strength values). Then move onto to more complex datasets and try to improve performance using latent diffusion or other more modern techniques
+What this repo has so far:
+- Full u-net implementation to serve as our score network 
+- Working Variance Preserving score matching diffusion training for MNIST Digits
+- Inference using euler method using the trained score network to generate new samples
+- `demos.ipynb`, contains some demonstrations and experiments related to what's going on with the model. 
 
 ## Resources
 - https://diffusion.csail.mit.edu/docs/lecture-notes.pdf

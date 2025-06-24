@@ -10,6 +10,7 @@ import math
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import argparse
+from torch.amp import autocast, GradScaler
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -48,6 +49,7 @@ class TrainDiffussionCFG:
     
     def train(self, epoch_count):
         optimizer = optim.AdamW(self.net.parameters(), lr=self.lr)
+        scaler = GradScaler('cuda')
 
         val_loss_history = []
         for i in range(epoch_count):
@@ -82,12 +84,14 @@ class TrainDiffussionCFG:
                 # plt.show()
                 ###
 
-                net_eval = self.net(x_t, t, y)
-                # this setup causes us to learn the negative score
-                loss = ( (torch.sqrt(1-alpha_bar)*net_eval + (noise))**2).mean()
+                with autocast('cuda'):
+                    net_eval = self.net(x_t, t, y)
+                    # this setup causes us to learn the negative score
+                    loss = ( (torch.sqrt(1-alpha_bar)*net_eval + (noise))**2).mean()
 
-                loss.backward()
-                optimizer.step()
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
 
                 train_losses.append(loss.item())
 
@@ -146,12 +150,12 @@ class SimulateDiff:
         self.network.eval()
 
         step_size = 1.0/timesteps
-        x = torch.randn(1, 1, 28, 28).to(device)
+        x = torch.randn(1, 3, 32, 32).to(device)
         t = torch.full((1, 1, 1, 1), 0.999).to(device)
         y = torch.tensor(y_label).to(device)
         y_null = torch.tensor(10).to(device)
         for debug_t in range(timesteps):
-            noise = torch.randn(1, 1, 28, 28).to(device)
+            noise = torch.randn(1, 3, 32, 32).to(device)
 
             # note that we have labels 0-9 for classes, then 10 for the null (unconditional) label
 
@@ -188,7 +192,7 @@ def reverse_norm(x, means, stds):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-r', '--learn_rate', required=True)
+    parser.add_argument('-r', '--learn_rate', default=1e-4, required=False)
     parser.add_argument('-b', '--batch_size', default=400, required=False)
     parser.add_argument('-e', '--epochs', default=500, required=False)
     parser.add_argument('-d', '--drop_rate', default=0.1, help='eta probability of dropping label for our classifier-free guidance set up', required=False)
@@ -210,13 +214,18 @@ if __name__ == '__main__':
 
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize([0.1307], [0.3081]) # means and stds from data.ipynb for mnist digits
+        transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2616]) # means and stds from data.ipynb 
     ])
 
-    train_set = (datasets.MNIST(root='./data', train=True, download=True, transform=transform))
+    # train_set = (datasets.MNIST(root='./data', train=True, download=True, transform=transform))
+    # train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+
+    # validation_set = (datasets.MNIST(root='./data', train=False, download=True, transform=transform))
+    # validation_loader = DataLoader(validation_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    train_set = (datasets.CIFAR10(root='./data', train=True, download=True, transform=transform))
     train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
-    validation_set = (datasets.MNIST(root='./data', train=False, download=True, transform=transform))
+    validation_set = (datasets.CIFAR10(root='./data', train=False, download=True, transform=transform))
     validation_loader = DataLoader(validation_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
 
     ns = NoiseScheduler()
